@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AERIS — Air Quality Dashboard</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Fonts: Syne (display) + DM Mono (data) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            display: ['Syne', 'sans-serif'],
+            mono:    ['DM Mono', 'monospace'],
+          },
+          colors: {
+            aeris: {
+              bg:      '#080c10',
+              surface: '#0d1520',
+              card:    '#111d2e',
+              border:  '#1a2d44',
+              accent:  '#00d4ff',
+              glow:    '#00d4ff33',
+              good:    '#22d3a3',
+              mod:     '#f59e0b',
+              poor:    '#f97316',
+              danger:  '#ef4444',
+              muted:   '#4a6580',
+              text:    '#c8dff0',
+            }
+          },
+          animation: {
+            'pulse-slow': 'pulse 3s cubic-bezier(0.4,0,0.6,1) infinite',
+            'spin-slow':  'spin 8s linear infinite',
+            'fade-in':    'fadeIn 0.6s ease forwards',
+          },
+          keyframes: {
+            fadeIn: {
+              '0%':   { opacity: '0', transform: 'translateY(12px)' },
+              '100%': { opacity: '1', transform: 'translateY(0)' },
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* ── Base ────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      background-color: #080c10;
+      font-family: 'Syne', sans-serif;
+      color: #c8dff0;
+      min-height: 100dvh;
+      overflow-x: hidden;
+    }
+
+    /* ── Noise grain overlay ─────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      background-size: 200px 200px;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.35;
+    }
+
+    /* ── Radial background glow ──────────────────────────── */
+    .bg-glow {
+      position: fixed;
+      width: 600px; height: 600px;
+      border-radius: 50%;
+      background: radial-gradient(circle, #00d4ff0d 0%, transparent 70%);
+      top: -200px; left: 50%;
+      transform: translateX(-50%);
+      pointer-events: none; z-index: 0;
+    }
+
+    /* ── Card base ───────────────────────────────────────── */
+    .card {
+      background: #111d2e;
+      border: 1px solid #1a2d44;
+      border-radius: 16px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s, box-shadow 0.3s;
+    }
+    .card:hover {
+      border-color: #00d4ff44;
+      box-shadow: 0 0 32px #00d4ff14;
+    }
+    .card::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(135deg, #ffffff08 0%, transparent 60%);
+      pointer-events: none;
+    }
+
+    /* ── Value display ───────────────────────────────────── */
+    .value-display {
+      font-family: 'DM Mono', monospace;
+      font-size: clamp(2rem, 6vw, 3.5rem);
+      font-weight: 500;
+      line-height: 1;
+      letter-spacing: -0.02em;
+    }
+
+    /* ── AQI pill ────────────────────────────────────────── */
+    .aqi-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 14px;
+      border-radius: 99px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* ── Fan arc ring ────────────────────────────────────── */
+    .ring-track { fill: none; stroke: #1a2d44; stroke-width: 6; }
+    .ring-fill  { fill: none; stroke-width: 6; stroke-linecap: round;
+                  transform-origin: center; transform: rotate(-90deg);
+                  transition: stroke-dashoffset 1.2s cubic-bezier(0.4,0,0.2,1),
+                              stroke 0.6s; }
+
+    /* ── Presence dot ────────────────────────────────────── */
+    .presence-dot {
+      width: 12px; height: 12px; border-radius: 50%;
+      transition: background 0.4s, box-shadow 0.4s;
+    }
+    .presence-dot.active {
+      background: #22d3a3;
+      box-shadow: 0 0 0 4px #22d3a333, 0 0 12px #22d3a366;
+      animation: pulse 2s infinite;
+    }
+    .presence-dot.inactive {
+      background: #4a6580;
+    }
+
+    /* ── Status bar ──────────────────────────────────────── */
+    .status-bar {
+      height: 3px; border-radius: 99px;
+      background: linear-gradient(90deg, #00d4ff, #22d3a3);
+      transition: width 1s ease;
+    }
+
+    /* ── Staggered card animations ───────────────────────── */
+    .card-anim { opacity: 0; animation: fadeIn 0.6s ease forwards; }
+    .card-anim:nth-child(1) { animation-delay: 0.1s; }
+    .card-anim:nth-child(2) { animation-delay: 0.2s; }
+    .card-anim:nth-child(3) { animation-delay: 0.3s; }
+    .card-anim:nth-child(4) { animation-delay: 0.4s; }
+    .card-anim:nth-child(5) { animation-delay: 0.5s; }
+    .card-anim:nth-child(6) { animation-delay: 0.6s; }
+
+    /* ── Live badge blink ────────────────────────────────── */
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    .live-dot { animation: blink 1.8s ease infinite; }
+
+    /* ── Offline overlay ─────────────────────────────────── */
+    #offline-banner {
+      transition: opacity 0.4s;
+    }
+  </style>
+</head>
+
+<body class="relative">
+  <div class="bg-glow"></div>
+
+  <!-- ════════════════════════════════════════════════════════
+       HEADER
+  ════════════════════════════════════════════════════════ -->
+  <header class="relative z-10 border-b border-aeris-border">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+      <!-- Wordmark -->
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg border border-aeris-accent/40 flex items-center justify-center">
+          <svg viewBox="0 0 24 24" fill="none" class="w-4 h-4 text-aeris-accent" stroke="currentColor" stroke-width="2">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+            <path d="M12 6v6l4 2"/>
+          </svg>
+        </div>
+        <span class="font-display font-800 text-xl tracking-tight text-white">AERIS</span>
+        <span class="text-aeris-muted font-mono text-xs hidden sm:block">/ air quality monitor</span>
+      </div>
+
+      <!-- Live status -->
+      <div class="flex items-center gap-2">
+        <div class="live-dot w-2 h-2 rounded-full bg-aeris-good" id="live-indicator"></div>
+        <span class="font-mono text-xs text-aeris-muted" id="last-updated">connecting...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ════════════════════════════════════════════════════════
+       OFFLINE BANNER (hidden by default)
+  ════════════════════════════════════════════════════════ -->
+  <div id="offline-banner" class="hidden relative z-10 bg-aeris-danger/10 border-b border-aeris-danger/30">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-2 text-center">
+      <span class="font-mono text-xs text-aeris-danger">⚠ Device offline or no data received yet</span>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════
+       MAIN GRID
+  ════════════════════════════════════════════════════════ -->
+  <main class="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 py-8">
+
+    <!-- AQI Hero Row -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+
+      <!-- PM2.5 — main hero card -->
+      <div class="card card-anim lg:col-span-2 p-6 sm:p-8">
+        <div class="flex items-start justify-between mb-6">
+          <div>
+            <p class="font-mono text-xs text-aeris-muted uppercase tracking-widest mb-1">PM2.5 Concentration</p>
+            <p class="font-mono text-xs text-aeris-muted">Atmospheric Equiv. (µg/m³)</p>
+          </div>
+          <span class="aqi-pill" id="aqi-pill">—</span>
+        </div>
+
+        <div class="flex items-end gap-4 mb-6">
+          <span class="value-display text-white" id="pm25-value">—</span>
+          <span class="font-mono text-aeris-muted text-sm mb-2">µg/m³</span>
+        </div>
+
+        <!-- Progress bar -->
+        <div class="h-1.5 bg-aeris-border rounded-full overflow-hidden">
+          <div class="status-bar" id="pm25-bar" style="width:0%"></div>
+        </div>
+        <div class="flex justify-between mt-1">
+          <span class="font-mono text-xs text-aeris-muted">0</span>
+          <span class="font-mono text-xs text-aeris-muted">Good ← → Very Unhealthy</span>
+          <span class="font-mono text-xs text-aeris-muted">150+</span>
+        </div>
+      </div>
+
+      <!-- Presence card -->
+      <div class="card card-anim p-6 flex flex-col justify-between">
+        <div>
+          <p class="font-mono text-xs text-aeris-muted uppercase tracking-widest mb-1">Occupancy</p>
+          <p class="font-mono text-xs text-aeris-muted">24 GHz mmWave Radar</p>
+        </div>
+
+        <div class="flex flex-col items-center justify-center flex-1 py-8 gap-4">
+          <div class="presence-dot inactive" id="presence-dot"></div>
+          <span class="font-display font-600 text-2xl" id="presence-label">—</span>
+          <span class="font-mono text-xs text-aeris-muted" id="presence-sub">Awaiting data</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Environment Row -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+
+      <!-- Temperature -->
+      <div class="card card-anim p-5">
+        <p class="font-mono text-xs text-aeris-muted uppercase tracking-widest mb-4">Temp</p>
+        <div class="value-display text-aeris-accent" style="font-size:2rem" id="temp-value">—</div>
+        <p class="font-mono text-xs text-aeris-muted mt-2">°C</p>
+      </div>
+
+      <!-- Humidity -->
+      <div class="card card-anim p-5">
+        <p class="font-mono text-xs text-aeris-muted uppercase tracking-widest mb-4">Humidity</p>
+        <div class="value-display text-aeris-accent" style="font-size:2rem" id="humidity-value">—</div>
+        <p class="font-mono text-xs text-aeris-muted mt-2">% RH</p>
+      </div>
+
+      <!-- VOC -->
+      <div class="card card-anim p-5">
+        <p class="font-mono text-xs text-aeris-muted uppercase tracking-widest mb-4">VOC</p>
+        <div class="value-display text-aeris-accent" style="font-size:2rem" id="voc-value">—</div>
+        <p class="font-mono text-xs text-aeris-muted mt-2">kΩ gas res.</p>
+      </div>
+
+      <!-- Fan Speed (ring) -->
+      <div class="card card-anim p-5 flex flex-col items-center">
+        <p class="font-mono text-xs text-aeris-muted uppercase tracking-widest mb-4 self-start">Fan</p>
+        <div class="relative w-20 h-20">
+          <svg viewBox="0 0 80 80" class="w-full h-full">
+            <circle class="ring-track" cx="40" cy="40" r="34"/>
+            <circle class="ring-fill" id="fan-ring"
+                    cx="40" cy="40" r="34"
+                    stroke="#00d4ff"
+                    stroke-dasharray="213.6"
+                    stroke-dashoffset="213.6"/>
+          </svg>
+          <div class="absolute inset-0 flex items-center justify-center">
+            <span class="font-mono text-sm font-500 text-white" id="fan-value">—</span>
+          </div>
+        </div>
+        <p class="font-mono text-xs text-aeris-muted mt-3">speed %</p>
+      </div>
+    </div>
+
+    <!-- Footer meta row -->
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mt-2">
+      <p class="font-mono text-xs text-aeris-muted">
+        AERIS prototype · ESP32 + PMS5003 + BME688 + LD2410B
+      </p>
+      <p class="font-mono text-xs text-aeris-muted" id="uptime-display"></p>
+    </div>
+  </main>
+
+  <!-- ════════════════════════════════════════════════════════
+       FIREBASE WEB SDK  (v10 modular)
+  ════════════════════════════════════════════════════════ -->
+  <script type="module">
+    import { initializeApp }          from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, onValue }
+                                      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+    // ══════════════════════════════════════════════════════
+    //  ★  PASTE YOUR FIREBASE CONFIG HERE  ★
+    //  Firebase Console → Project Settings → Your Apps → SDK setup
+    // ══════════════════════════════════════════════════════
+    const firebaseConfig = {
+      apiKey:            "YOUR_API_KEY",
+      authDomain:        "YOUR_PROJECT_ID.firebaseapp.com",
+      databaseURL:       "YOUR_RTDB_URL",
+      projectId:         "YOUR_PROJECT_ID",
+      storageBucket:     "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId:             "YOUR_APP_ID",
+    };
+    // ══════════════════════════════════════════════════════
+
+    // ── Init Firebase ─────────────────────────────────────
+    const app = initializeApp(firebaseConfig);
+    const db  = getDatabase(app);
+
+    // ── DOM refs ──────────────────────────────────────────
+    const el = id => document.getElementById(id);
+    const pm25El      = el('pm25-value');
+    const pm25Bar     = el('pm25-bar');
+    const aqiPill     = el('aqi-pill');
+    const tempEl      = el('temp-value');
+    const humEl       = el('humidity-value');
+    const vocEl       = el('voc-value');
+    const fanVal      = el('fan-value');
+    const fanRing     = el('fan-ring');
+    const presenceDot = el('presence-dot');
+    const presenceLbl = el('presence-label');
+    const presenceSub = el('presence-sub');
+    const lastUpdEl   = el('last-updated');
+    const offlineBnr  = el('offline-banner');
+    const uptimeEl    = el('uptime-display');
+
+    // ── AQI colour config ─────────────────────────────────
+    const AQI_COLORS = {
+      "Good":                  { pill: 'bg-emerald-900/60 text-emerald-300 border border-emerald-700', bar: '#22d3a3' },
+      "Moderate":              { pill: 'bg-amber-900/60  text-amber-300  border border-amber-700',  bar: '#f59e0b' },
+      "Unhealthy (Sensitive)": { pill: 'bg-orange-900/60 text-orange-300 border border-orange-700', bar: '#f97316' },
+      "Unhealthy":             { pill: 'bg-red-900/60    text-red-300    border border-red-700',    bar: '#ef4444' },
+      "Very Unhealthy":        { pill: 'bg-rose-900/60   text-rose-300   border border-rose-700',   bar: '#e11d48' },
+    };
+
+    // ── Offline watchdog ──────────────────────────────────
+    let offlineTimer = setTimeout(() => offlineBnr.classList.remove('hidden'), 8000);
+    const resetOfflineTimer = () => {
+      clearTimeout(offlineTimer);
+      offlineBnr.classList.add('hidden');
+      offlineTimer = setTimeout(() => offlineBnr.classList.remove('hidden'), 15000);
+    };
+
+    // ── Fan ring circumference = 2π × 34 ≈ 213.6 ─────────
+    const RING_C = 2 * Math.PI * 34;
+
+    // ── Listen to /aeris/live in real time ────────────────
+    const liveRef = ref(db, '/aeris/live');
+    onValue(liveRef, (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+
+      resetOfflineTimer();
+
+      // PM2.5
+      const pm25 = data.pm25 ?? 0;
+      pm25El.textContent = pm25.toFixed(1);
+      const pct = Math.min((pm25 / 150) * 100, 100);
+      pm25Bar.style.width = pct + '%';
+
+      // AQI pill
+      const label = data.aqi_label ?? 'Good';
+      const theme  = AQI_COLORS[label] ?? AQI_COLORS['Good'];
+      aqiPill.className = `aqi-pill ${theme.pill}`;
+      aqiPill.textContent = label;
+      pm25Bar.style.background = `linear-gradient(90deg, ${theme.bar}, ${theme.bar}88)`;
+
+      // Env
+      tempEl.textContent = (data.temperature ?? 0).toFixed(1);
+      humEl.textContent  = (data.humidity    ?? 0).toFixed(1);
+      vocEl.textContent  = (data.voc_kohm    ?? 0).toFixed(1);
+
+      // Fan ring
+      const fanPct = data.fan_pct ?? 0;
+      fanVal.textContent = fanPct + '%';
+      const offset = RING_C - (fanPct / 100) * RING_C;
+      fanRing.style.strokeDashoffset = offset;
+
+      // Presence
+      const present = data.presence ?? false;
+      presenceDot.className = 'presence-dot ' + (present ? 'active' : 'inactive');
+      presenceLbl.textContent = present ? 'Occupied' : 'Empty';
+      presenceSub.textContent = present ? 'Motion or presence detected' : 'No one detected';
+
+      // Last updated
+      const now = new Date();
+      lastUpdEl.textContent = 'updated ' + now.toLocaleTimeString();
+    });
+
+    // ── Uptime counter ────────────────────────────────────
+    const startTime = Date.now();
+    setInterval(() => {
+      const s = Math.floor((Date.now() - startTime) / 1000);
+      const h = String(Math.floor(s / 3600)).padStart(2,'0');
+      const m = String(Math.floor((s % 3600) / 60)).padStart(2,'0');
+      const sec = String(s % 60).padStart(2,'0');
+      uptimeEl.textContent = `dashboard uptime ${h}:${m}:${sec}`;
+    }, 1000);
+  </script>
+</body>
+</html>
