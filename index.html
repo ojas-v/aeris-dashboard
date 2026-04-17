@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AERIS — Air Quality Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { display: ['Syne', 'sans-serif'], mono: ['DM Mono', 'monospace'], } } }
+    }
+  </script>
+
+  <style>
+    body { background-color: #080c10; font-family: 'Syne', sans-serif; color: #c8dff0; min-height: 100dvh; }
+    .card { background: #111d2e; border: 1px solid #1a2d44; border-radius: 16px; overflow: hidden; }
+    .value-display { font-family: 'DM Mono', monospace; font-size: 3.5rem; font-weight: 500; }
+    .aqi-pill { display: inline-flex; padding: 4px 14px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+    .status-bar { height: 3px; border-radius: 99px; transition: width 1s ease; }
+    
+    /* FIXED ANIMATION */
+    @keyframes popIn {
+      0% { opacity: 0; transform: translateY(15px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+    .card-anim { animation: popIn 0.8s ease forwards; }
+  </style>
+</head>
+
+<body class="p-4 sm:p-8">
+  <header class="max-w-4xl mx-auto flex justify-between items-center mb-8 border-b border-[#1a2d44] pb-4">
+    <h1 class="font-display font-800 text-2xl text-white">AERIS <span class="text-sm text-[#4a6580] font-mono">/ Live Data</span></h1>
+    <div class="text-xs font-mono text-[#4a6580]" id="last-updated">connecting...</div>
+  </header>
+
+  <main class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4">
+    
+    <div class="card card-anim p-6 md:col-span-2">
+      <div class="flex justify-between items-start mb-4">
+        <p class="font-mono text-xs text-[#4a6580] uppercase tracking-widest">Dust Density (Sharp Sensor)</p>
+        <span class="aqi-pill bg-emerald-900/60 text-emerald-300 border border-emerald-700" id="aqi-pill">WAITING</span>
+      </div>
+      <div class="flex items-end gap-4 mb-4">
+        <span class="value-display text-white" id="dust-value">—</span>
+        <span class="font-mono text-[#4a6580] mb-2">µg/m³</span>
+      </div>
+      <div class="h-1.5 bg-[#1a2d44] rounded-full overflow-hidden">
+        <div class="status-bar bg-[#22d3a3]" id="dust-bar" style="width:0%"></div>
+      </div>
+    </div>
+
+    <div class="card card-anim p-6">
+      <p class="font-mono text-xs text-[#4a6580] uppercase tracking-widest mb-4">Gas / VOCs (MQ135)</p>
+      <div class="value-display text-[#00d4ff]" style="font-size:2.5rem" id="gas-value">—</div>
+      <p class="font-mono text-xs text-[#4a6580] mt-2">Raw ADC Value</p>
+    </div>
+
+    <div class="card card-anim p-6">
+      <p class="font-mono text-xs text-[#4a6580] uppercase tracking-widest mb-4">Blower Speed</p>
+      <div class="value-display text-white" style="font-size:2.5rem"><span id="fan-value">—</span>%</div>
+      <p class="font-mono text-xs text-[#4a6580] mt-2">PWM Duty Cycle</p>
+    </div>
+
+  </main>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCeQan2EK1OQVxhsDMsQ793mHdl4LxuMwI",
+      authDomain: "aeris-monitor.firebaseapp.com",
+      databaseURL: "https://aeris-monitor-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "aeris-monitor",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    // Color Logic
+    const colors = {
+      "Good": { bg: "bg-emerald-900/60", text: "text-emerald-300", border: "border-emerald-700", hex: "#22d3a3" },
+      "Moderate": { bg: "bg-amber-900/60", text: "text-amber-300", border: "border-amber-700", hex: "#f59e0b" },
+      "Poor": { bg: "bg-orange-900/60", text: "text-orange-300", border: "border-orange-700", hex: "#f97316" },
+      "Severe": { bg: "bg-red-900/60", text: "text-red-300", border: "border-red-700", hex: "#ef4444" }
+    };
+
+    onValue(ref(db, '/aeris/live'), (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+
+      // Update Dust
+      const dust = data.dust_density ?? 0;
+      document.getElementById('dust-value').textContent = dust.toFixed(1);
+      document.getElementById('dust-bar').style.width = Math.min((dust / 200) * 100, 100) + '%';
+      
+      // Update AQI Pill
+      const label = data.aqi_label ?? "Good";
+      const c = colors[label] || colors["Good"];
+      const pill = document.getElementById('aqi-pill');
+      pill.className = `aqi-pill ${c.bg} ${c.text} ${c.border}`;
+      pill.textContent = label;
+      document.getElementById('dust-bar').style.backgroundColor = c.hex;
+
+      // Update Gas & Fan
+      document.getElementById('gas-value').textContent = data.mq135_raw ?? 0;
+      document.getElementById('fan-value').textContent = data.fan_pct ?? 0;
+      document.getElementById('last-updated').textContent = "Live • " + new Date().toLocaleTimeString();
+    });
+  </script>
+</body>
+</html>
