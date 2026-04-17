@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AERIS — Enterprise Telemetry</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['Outfit', 'sans-serif'], mono: ['Space Mono', 'monospace'], } } }
+    }
+  </script>
+
+  <style>
+    body {
+      background: linear-gradient(-45deg, #020617, #0f172a, #082f49, #020617);
+      background-size: 400% 400%;
+      animation: gradientBG 20s ease infinite;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+    @keyframes gradientBG { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+
+    .glass-card {
+      background: rgba(15, 23, 42, 0.4);
+      backdrop-filter: blur(24px);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.5);
+      border-radius: 24px;
+    }
+
+    .glow-good { box-shadow: 0 0 30px rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.2); }
+    .glow-poor { box-shadow: 0 0 30px rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.3); }
+
+    .turbine-ring {
+      position: absolute; right: -20px; bottom: -40px;
+      width: 140px; height: 140px; border-radius: 50%;
+      border: 2px dashed rgba(56, 189, 248, 0.2);
+      border-top: 2px solid rgba(56, 189, 248, 0.8);
+      transition: animation-duration 0.5s;
+    }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    /* SVG Progress Circle */
+    .circular-chart { display: block; margin: 0 auto; max-width: 80%; max-height: 250px; }
+    .circle-bg { fill: none; stroke: rgba(255,255,255,0.05); stroke-width: 3.8; }
+    .circle { fill: none; stroke-width: 3.8; stroke-linecap: round; transition: stroke-dasharray 1s ease-out; }
+  </style>
+</head>
+
+<body class="p-4 sm:p-8 flex flex-col items-center">
+  
+  <header class="w-full max-w-6xl flex justify-between items-end mb-8 border-b border-slate-700/50 pb-4">
+    <div>
+      <h1 class="text-4xl font-bold text-white tracking-widest">AERIS<span class="text-cyan-500">.</span></h1>
+      <p class="font-mono text-xs text-slate-400 mt-1 uppercase tracking-widest">Enterprise Air Quality Analytics</p>
+    </div>
+    <div class="text-right">
+      <div id="connection-status" class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 font-mono text-xs shadow-[0_0_15px_rgba(6,182,212,0.2)]">
+        <span class="relative flex h-2 w-2">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+        </span>
+        Live Sync
+      </div>
+    </div>
+  </header>
+
+  <main class="w-full max-w-6xl grid grid-cols-1 md:grid-cols-12 gap-6">
+    
+    <div id="main-card" class="glass-card p-8 md:col-span-8 transition-all duration-700 glow-good flex flex-col justify-between h-full relative overflow-hidden">
+      <div class="absolute -top-32 -left-32 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl" id="card-glow"></div>
+      
+      <div class="flex justify-between items-start z-10">
+        <div>
+          <h2 class="font-mono text-sm text-slate-400 uppercase tracking-wider">PM2.5 Airborne Particulates</h2>
+          <div class="flex items-center gap-2 mt-1">
+            <span id="trend-icon" class="text-emerald-400">●</span>
+            <p id="trend-text" class="text-xs font-mono text-slate-500 uppercase">Calculating Trend...</p>
+          </div>
+        </div>
+        <span id="aqi-pill" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest bg-emerald-500/20 text-emerald-400 border border-emerald-500/50">Optimal</span>
+      </div>
+      
+      <div class="mt-8 flex items-baseline gap-3 z-10">
+        <span id="dust-value" class="text-8xl font-light text-white tracking-tighter">--</span>
+        <span class="font-mono text-lg text-slate-400">µg/m³</span>
+      </div>
+      
+      <div class="w-full h-48 mt-8 z-10">
+        <canvas id="aqiChart"></canvas>
+      </div>
+    </div>
+
+    <div class="md:col-span-4 flex flex-col gap-6">
+      
+      <div class="glass-card p-6 flex flex-col items-center justify-center relative overflow-hidden h-48">
+        <h2 class="font-mono text-[10px] text-slate-400 uppercase tracking-widest absolute top-4 left-6">HEPA Filter Integrity</h2>
+        
+        <div class="mt-4 relative w-32 h-32">
+          <svg viewBox="0 0 36 36" class="circular-chart text-emerald-400 w-full h-full drop-shadow-[0_0_10px_rgba(52,211,153,0.3)]">
+            <path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            <path class="circle stroke-current" id="filter-ring" stroke-dasharray="100, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+          </svg>
+          <div class="absolute inset-0 flex flex-col items-center justify-center">
+            <span id="filter-value" class="text-2xl font-bold text-white">100%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card p-6 grid grid-cols-2 gap-4">
+        <div class="border-r border-slate-700/50 pr-4">
+          <h2 class="font-mono text-[10px] text-slate-400 uppercase tracking-widest mb-2">Ambient Temp</h2>
+          <div class="flex items-baseline gap-1">
+            <span id="temp-value" class="text-4xl font-light text-orange-200">--</span>
+            <span class="font-mono text-sm text-slate-500">°C</span>
+          </div>
+        </div>
+        <div class="pl-2">
+          <h2 class="font-mono text-[10px] text-slate-400 uppercase tracking-widest mb-2">Relative Humidity</h2>
+          <div class="flex items-baseline gap-1">
+            <span id="hum-value" class="text-4xl font-light text-blue-200">--</span>
+            <span class="font-mono text-sm text-slate-500">%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card p-6 flex flex-col justify-center relative overflow-hidden">
+        <h2 class="font-mono text-[10px] text-slate-400 uppercase tracking-widest mb-2">Centrifugal Exhaust</h2>
+        <div class="flex items-baseline gap-2 z-10">
+          <span id="fan-value" class="text-5xl font-light text-white">--</span>
+          <span class="font-mono text-sm text-cyan-500">% RPM</span>
+        </div>
+        <div class="turbine-ring" id="turbine" style="animation: spin 0s linear infinite;"></div>
+      </div>
+
+    </div>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+    // ⚠️ PASTE YOUR FIREBASE CONFIG HERE ⚠️
+    const firebaseConfig = {
+  apiKey: "AIzaSyCeQan2EK1OQVxhsDMsQ793mHdl4LxuMwI",
+  authDomain: "aeris-monitor.firebaseapp.com",
+  databaseURL: "https://aeris-monitor-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "aeris-monitor",
+  storageBucket: "aeris-monitor.firebasestorage.app",
+  messagingSenderId: "947232062701",
+  appId: "1:947232062701:web:6ddfc2cdab6f1bca2e60e4"
+};
+
+    // ⚠️ PASTE YOUR OPENWEATHER API KEY HERE ⚠️
+    const openWeatherApiKey = "debaf8332fe1c13d376a802859a470fc"; 
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    const ctx = document.getElementById('aqiChart').getContext('2d');
+    let gradient = ctx.createLinearGradient(0, 0, 0, 150);
+    gradient.addColorStop(0, 'rgba(16, 185, 129, 0.4)');
+    gradient.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
+
+    const aqiChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: Array(25).fill(''),
+        datasets: [{
+          data: Array(25).fill(0),
+          borderColor: '#34d399', borderWidth: 2.5, backgroundColor: gradient, fill: true, tension: 0.5, pointRadius: 0, 
+        }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { display: false, min: 0 } }, animation: { duration: 800 } }
+    });
+
+    // --- Analytics State ---
+    let previousDustHistory = [];
+    
+    // Initialize or fetch Filter Life from Local Storage
+    let filterLife = localStorage.getItem("aeris_filter_life");
+    if (!filterLife) {
+      filterLife = 100.00; // Start at 100%
+      localStorage.setItem("aeris_filter_life", filterLife);
+    }
+
+    onValue(ref(db, '/aeris/live'), (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+
+      const dust = data.dust_density ?? 0;
+      const fanSpeed = data.fan_pct ?? 0;
+      
+      document.getElementById('dust-value').textContent = dust.toFixed(1);
+      document.getElementById('fan-value').textContent = fanSpeed;
+      
+      // 1. Turbine Animation
+      const turbine = document.getElementById('turbine');
+      if (fanSpeed > 0) {
+        const duration = Math.max(0.2, 5 - (fanSpeed / 100) * 4.8); 
+        turbine.style.animation = `spin ${duration}s linear infinite`;
+        turbine.style.borderColor = "rgba(56, 189, 248, 0.6)";
+      } else {
+        turbine.style.animation = "none";
+      }
+
+      // 2. Trend Analytics (Derivative)
+      previousDustHistory.push(dust);
+      if (previousDustHistory.length > 5) previousDustHistory.shift();
+      
+      if (previousDustHistory.length === 5) {
+        const oldest = previousDustHistory[0];
+        const newest = previousDustHistory[4];
+        const delta = newest - oldest;
+        
+        const trendText = document.getElementById('trend-text');
+        const trendIcon = document.getElementById('trend-icon');
+        
+        if (delta > 5) { // Dust is rising quickly
+          trendText.textContent = "Air Quality Degrading";
+          trendIcon.textContent = "↑";
+          trendIcon.className = "text-red-400 font-bold";
+        } else if (delta < -5) { // Dust is clearing
+          trendText.textContent = "Active Purification";
+          trendIcon.textContent = "↓";
+          trendIcon.className = "text-emerald-400 font-bold";
+        } else {
+          trendText.textContent = "Environment Stable";
+          trendIcon.textContent = "≈";
+          trendIcon.className = "text-slate-400 font-bold";
+        }
+      }
+
+      // 3. Predictive Filter Wear Engine
+      // Wear is calculated based on how much dust is passing through the fan
+      // This formula decreases life slightly every tick based on actual physical usage.
+      const wearTick = (dust * fanSpeed) * 0.00001; 
+      filterLife = Math.max(0, parseFloat(filterLife) - wearTick);
+      localStorage.setItem("aeris_filter_life", filterLife.toFixed(4));
+      
+      document.getElementById('filter-value').textContent = Math.floor(filterLife) + "%";
+      document.getElementById('filter-ring').setAttribute('stroke-dasharray', `${Math.floor(filterLife)}, 100`);
+
+      // Change Filter Ring color if it gets low
+      const filterRing = document.getElementById('filter-ring');
+      if (filterLife > 50) filterRing.className.baseVal = "circle stroke-emerald-400";
+      else if (filterLife > 20) filterRing.className.baseVal = "circle stroke-amber-400";
+      else filterRing.className.baseVal = "circle stroke-red-500";
+
+      // 4. UI Colors & Chart
+      const label = data.aqi_label ?? "Optimal";
+      const pill = document.getElementById('aqi-pill');
+      const mainCard = document.getElementById('main-card');
+      const cardGlow = document.getElementById('card-glow');
+      
+      if(label === "Good" || label === "Optimal") {
+        mainCard.className = "glass-card p-8 md:col-span-8 transition-all duration-1000 glow-good flex flex-col justify-between h-full relative overflow-hidden";
+        cardGlow.className = "absolute -top-32 -left-32 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl";
+        pill.className = "px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest bg-emerald-500/20 text-emerald-400 border border-emerald-500/50";
+        pill.textContent = "Optimal";
+        aqiChart.data.datasets[0].borderColor = "#34d399";
+        updateChartGradient(ctx, 'rgba(16, 185, 129, 0.3)');
+      } else {
+        mainCard.className = "glass-card p-8 md:col-span-8 transition-all duration-1000 glow-poor flex flex-col justify-between h-full relative overflow-hidden";
+        cardGlow.className = "absolute -top-32 -left-32 w-64 h-64 bg-red-500/10 rounded-full blur-3xl";
+        pill.className = "px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest bg-red-500/20 text-red-400 border border-red-500/50";
+        pill.textContent = label;
+        aqiChart.data.datasets[0].borderColor = "#ef4444";
+        updateChartGradient(ctx, 'rgba(239, 68, 68, 0.3)');
+      }
+
+      aqiChart.data.datasets[0].data.push(dust);
+      aqiChart.data.datasets[0].data.shift();
+      aqiChart.update();
+    });
+
+    function updateChartGradient(context, colorStart) {
+      let newGradient = context.createLinearGradient(0, 0, 0, 150);
+      newGradient.addColorStop(0, colorStart);
+      newGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      aqiChart.data.datasets[0].backgroundColor = newGradient;
+    }
+
+    // --- Ambient Climate Data via OpenWeather API ---
+    async function fetchLocalClimate() {
+      const locationQuery = "Chennai,IN"; 
+      const url = `https://api.openweathermap.org/data/2.5/weather?q=${locationQuery}&units=metric&appid=${openWeatherApiKey}`;
+
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("API Error");
+        const data = await response.json();
+        document.getElementById('temp-value').textContent = Math.round(data.main.temp);
+        document.getElementById('hum-value').textContent = data.main.humidity;
+      } catch (error) {
+        document.getElementById('temp-value').textContent = "ERR";
+        document.getElementById('hum-value').textContent = "ERR";
+      }
+    }
+
+    fetchLocalClimate();
+    setInterval(fetchLocalClimate, 600000);
+  </script>
+</body>
+</html>
